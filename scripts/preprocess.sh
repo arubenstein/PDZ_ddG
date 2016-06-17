@@ -14,4 +14,4 @@ then
         exit
 fi
         
-python $SCRIPTS'/'gen_mutfile_pdbs.py --in_pdb $pdb --orig_pdb_path  $INPATH'/'input_pdbs/orig_pdb/ --list_seqs_file $INPATH'/'list_seqs'/'$pdb_name'.list' --mut_file_path $INPATH'/'mut_file'/'
+python $SCRIPTS'/'gen_mutfile_pdbs.py --in_pdb $pdb --orig_pdb_path  $INPATH'/'input_pdbs/orig_pdb/ --list_seqs_file $INPATH'/'list_seqs'/'$pdb_name'.list' --all_seqs_data $INPATH'/'list_seqs'/'all_seqs_data.tsv --mut_file_path $INPATH'/'mut_file'/'
