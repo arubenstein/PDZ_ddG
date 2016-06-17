@@ -40,12 +40,15 @@ then
 
 else
 	#run ddg on pre_min pdbs
-	$SCRIPTS'/'loop_pdbs.sh $OUTPATH'/pre_min2/*.pdb' $OUTPATH'/'ddg'/' "" 8 14 $SCRIPTS'/'ddg.sh $server 5 10
+	#$SCRIPTS'/'loop_pdbs.sh $OUTPATH'/pre_min2/*.pdb' $OUTPATH'/'ddg'/' "" 8 14 $SCRIPTS'/'ddg.sh $server 5 10
 
 	#performing flexpepdock refine for 1g9o - only on server 
         #only one server because already partitioned the pdbs in the previous step
-	$SCRIPTS'/'loop_pdbs.sh $OUTPATH'/ddg/*/*.pdb' $OUTPATH'/refine/' "" 8 6 $SCRIPTS'/'fpd_refine.sh 1 1 10
+	#$SCRIPTS'/'loop_pdbs.sh $OUTPATH'/ddg/*/*.pdb' $OUTPATH'/refine/' "" 8 6 $SCRIPTS'/'fpd_refine.sh 1 1 10
 
-	$SCRIPTS'/'loop_pdbs.sh $OUTPATH'/refine/*/' $OUTPATH'/refine/' "" 0 6 $SCRIPTS'/'fpd_postprocess.sh 1 1 1 
+	#$SCRIPTS'/'loop_pdbs.sh $OUTPATH'/refine/*/' $OUTPATH'/refine/' "" 0 6 $SCRIPTS'/'fpd_postprocess.sh 1 1 1 
+
+        $SCRIPTS'/'loop_pdbs.sh $OUTPATH'/refine/*/' $OUTPATH'/ddg_csv/rosetta/' "" 0 4 $SCRIPTS'/'ddg_rmsd.sh $server 5 1
+
 fi
 
