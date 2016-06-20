@@ -34,7 +34,7 @@ def make_mut_file(list_seqs, length, n_pdz_res, WT_pept, mut_file, orig, pdz_mut
     total_muts=0
     list_total_muts=[ 0 for _ in list_seqs ]
     list_muts=[ [] for _ in list_seqs ]
-    rec_id_corr=[ [sd[0],sd[2]+"_","",""] for sd in list_seqs_data ]
+    rec_id_corr=[ [sd[0],sd[2]+"_","","",""] for sd in list_seqs_data ]
     
     for seq_ind,(seq,seq_data) in enumerate(zip(list_seqs, list_seqs_data)):
         if pdz_muts is not None and pdz_muts[seq_ind] != "Wildtype":
@@ -57,9 +57,8 @@ def make_mut_file(list_seqs, length, n_pdz_res, WT_pept, mut_file, orig, pdz_mut
 		list_muts[seq_ind].append("{0} {1} {2}\n".format(WT, res_ind, mut))
                 list_total_muts[seq_ind] = list_total_muts[seq_ind] + 1
                 total_muts = total_muts + 1
-	
         #check if wildtype.  determined by being non-blind and having a ddg of 0 or by being blind and being the same peptide as in pdb
-        if ( len(seq_data) == 6 and float(seq_data[5]) == 0.0 ) or ( len(seq_data) == 4 and len(list_muts[seq_ind]) == 0 ):
+        if ( len(seq_data) == 7 and float(seq_data[5]) == 0.0 ) or ( len(seq_data) == 4 and len(list_muts[seq_ind]) == 0 ):
             rec_id_corr[seq_ind][1] = rec_id_corr[seq_ind][1] + "wt"
         else:
 	    rec_id_corr[seq_ind][1] = rec_id_corr[seq_ind][1] + "mut"
@@ -69,8 +68,9 @@ def make_mut_file(list_seqs, length, n_pdz_res, WT_pept, mut_file, orig, pdz_mut
         else:
 	    rec_id_corr[seq_ind][2] = "{0}_".format(os.path.basename(mut_file)[0:6]) + ''.join([ ''.join(m.split()) for m in list_muts[seq_ind] ] )
 
-	if len(seq_data) == 6:
-            rec_id_corr[seq_ind][3] = seq_data[6]
+	if len(seq_data) == 7:
+            rec_id_corr[seq_ind][3] = seq_data[5]
+	    rec_id_corr[seq_ind][4] = seq_data[6]
     #take out any cases where list_total_muts is 0
     ind = [ i for i,tot_muts in enumerate(list_total_muts) if tot_muts != 0 ]
     list_total_muts = [ list_total_muts[i] for i in ind ]
@@ -179,7 +179,7 @@ def main(in_pdb, orig_pdb_path, list_seqs_file, all_seqs_data, mut_file_path):
 
     with open(mut_file_path + pdb_id[0:4] + ".rc", 'w') as rc:
         for item in rec_id_corr:
-	    last_item = ",{0}".format(item[3]) if item[3] != "" else ""
+	    last_item = ",{0},{1}".format(item[3],item[4]) if item[3] != "" else ""
             rc.write("{0},{1},{2}{3}\n".format(item[0], item[1], item[2], last_item))
 
 if __name__ == "__main__":
