@@ -9,6 +9,63 @@ from plot import conv
 from scipy.stats.stats import pearsonr
 from scipy.stats.stats import spearmanr
 
+def dominates(row, rowCandidate):
+    return all(r <= rc for r, rc in zip(row, rowCandidate))
+
+def cull(pts, dominates):
+    dominated = []
+    cleared = []
+    remaining = pts
+    while remaining:
+        candidate = remaining[0]
+        new_remaining = []
+        for other in remaining[1:]:
+            [new_remaining, dominated][dominates(candidate, other)].append(other)
+        if not any(dominates(other, candidate) for other in new_remaining):
+            cleared.append(candidate)
+        else:
+            dominated.append(candidate)
+        remaining = new_remaining
+    return cleared, dominated
+
+def gen_ranks(list_energies):
+    indices = list(range(len(list_energies)))
+    indices.sort(key=lambda x: list_energies[x])
+    output = [0] * len(indices)
+    for i, x in enumerate(indices):
+        output[x] = i
+    return output
+
+def find_pareto(csv_list1, csv_list2):
+
+    comb = [ (dg,dg2) for k,dg,r in csv_list1 for k2,dg2,r2 in csv_list2 if k == k2 ]
+    list_dgs1 = [ d1 for d1, d2 in comb ]
+    list_dgs2 = [ d2 for d1, d2 in comb ]
+
+    ranks1 = gen_ranks(list_dgs1)
+    ranks2 = gen_ranks(list_dgs2)
+
+    pts = map(list, zip(ranks1, ranks2))
+
+    cleared, dominated = cull(pts, dominates)
+
+    cleared_d = dict(cleared)
+    pts_r = zip(ranks1,ranks2,list_dgs1,list_dgs2)
+
+    pareto_equal_min = min([ e1+e2 for e1,e2 in cleared_d.items() ])
+    list_pts =  [ (r1,r2,l1,l2) for r1, r2, l1, l2 in pts_r if r1+r2 == pareto_equal_min ]
+    avg_min_dg = find_lowest_point( list_pts )
+
+    return avg_min_dg
+
+def find_lowest_point( list_pts ):
+    first_rank_list = [ p[0] for p in list_pts ]
+    second_rank_list = [ p[1] for p in list_pts ]
+    min_rank = min(first_rank_list + second_rank_list)
+    min_point = [ (l1,l2) for r1, r2, l1, l2 in list_pts if min_rank == r1 or min_rank == r2 ][0]
+    avg = (min_point[0] + min_point[1]) / 2.0
+    return avg
+
 def read_csv_dict(csv_file_name):
     with open(csv_file_name) as c:
         lines = c.readlines()
@@ -24,138 +81,171 @@ def read_csv_list(csv_file_name, protocol=None):
 
     csv_list = [ l.strip().split(',') for l in lines ]
     if protocol == "rosetta":
-        csv_list = [ [l[0][0:-5]] + l[1:] for l in csv_list ]
+        csv_list = [ [l[0][0:-5]] + [float(l[1])/1.0] + l[2:] for l in csv_list ]
     elif protocol == "amber":
-        csv_list = [ [l[0][38:-4]] + [float(l[1])/2.0] + l[2:]  for l in csv_list ]
+        csv_list = [ [l[0][38:-5]] + [float(l[1])/2.0] + l[2:]  for l in csv_list ]
 
     
     return csv_list
 
-def get_stats(csv_dict):
+def get_mean(csv_dict):
     mean_dg = np.mean([ float(dg) for key, dg, rmsd in csv_dict ])
-    min_dg_dg = min([ float(dg) for key, dg, rmsd in csv_dict ])
-    min_rmsd_dg = float(sorted(csv_dict, key=lambda x: float(x[2]))[0][1])
+    return mean_dg 
+
+def get_bottom3(csv_dict):
     bottom3_dg = np.mean(sorted([float(dg) for key,dg,rmsd in csv_dict])[0:3])
-    return mean_dg, min_dg_dg, min_rmsd_dg, bottom3_dg
+    return bottom3_dg
 
-def main(rec_corr_path, amber_csv_path, rosetta_csv_path, amber_pdb_path, rosetta_pdb_path, out_csv_path):
-    #root, ext = os.path.splitext(in_pdb)	 
-    #pdb_path, pdb_id = os.path.split(root)
+def get_mean_csv(csv_name,protocol=None):
+    return get_mean(read_csv_list(csv_name, protocol=protocol))
 
-    fig_all, axarr_all = conv.create_ax(4, 3)
-    fig_all_corr, axarr_all_corr = conv.create_ax(1, 2)
+def get_bottom3_csv(csv_name,protocol=None):
+    return get_mean(read_csv_list(csv_name, protocol=protocol))
+
+def get_mean_txt(txt_name,protocol=None):
+    with open(txt_name) as t:
+        m = float(t.readlines()[0].strip())
+    return m
+
+def main(rec_corr_path, ddg_path, amber_pdb_path, rosetta_pdb_path, out_csv_path):
+    amber_csv_path = os.path.join(ddg_path, "amber")
+    rosetta_csv_path = os.path.join(ddg_path, "rosetta")
+    amber_inter_mean_path = os.path.join(ddg_path, "amber_inter_mean")
+    rosetta_inter_mean_path = os.path.join(ddg_path, "rosetta_inter_mean")
+    rosetta_inter_path = os.path.join(ddg_path, "rosetta_inter")
+
+
+    #Plots to generate
+    #Per pdb - known ddg vs. many diff protocols, each with their own row.  A protocol may have more than one plot depending on filtering method (i.e. mean, bottom 3, pareto)
+    #For all pdbs - pred rosetta corr values vs. many diff protocols, each with their series color.  A protocol may have more than one plot depending on filtering method (i.e. mean, bottom 3, pareto).  3 rows one for each corr value
+    #For all pdbs - known ddg vs. many diff protocols, each with their own row. A protocol may have more than one plot depending on filtering method (i.e. mean, bottom 3, pareto)
 
     list_rec_corr_names = glob.glob(rec_corr_path + "*.rc")
 
-    corr_values_dict = { "Mean" : [ [] for _ in range(0,6) ], "Min DG" : [ [] for _ in range(0,6) ], "Min RMSD" : [ [] for _ in range(0,6) ], "Bottom 3" : [ [] for _ in range(0,6) ] }
-    all_amean_ddg = []
-    all_rmean_ddg = []
+    #corr_values_dict has the following shape - "Pred" : { "Pred" : [ddg_vals] }, "Amber" : { "Mean.." : [ddg_vals], "Bott.." : [ddg_vals]}, "Rosetta" : { "Mean.." : [ddg_vals], "Bott.." : [ddg_vals]} 
+    corr_values_dict = {}
+    
+    all_amber_ddg_dict = {}
+    all_rosetta_ddg_dict = {}
+    all_known_ddg_dict = {}
+    all_pred_ddg_dict = {}
+
     k_ddg = []
+    p_ddg = []
 
     for rec_corr in list_rec_corr_names:
-	print rec_corr
+        print rec_corr
         rec_corr_list = read_csv_list(rec_corr)
+        #no known ddg
         if len(rec_corr_list[0]) == 3:
             continue
-	amber_csv_dict = {}
-        rosetta_csv_dict = {}
-
+        amber_dg_dict = {}
+        rosetta_dg_dict = {}
+        
         #read in all amber csvs that correspond to column 3 in rec_corr file and rosetta ones too
-        for record_id, prefix, filename, known_ddg in rec_corr_list:
-            amber_csv_dict[filename] = read_csv_list(os.path.join(amber_csv_path,filename+".csv"), protocol="amber") 
-            rosetta_csv_dict[filename] = read_csv_list(os.path.join(rosetta_csv_path,filename+".csv"), protocol="rosetta")
-
+        for record_id, prefix, filename, known_ddg, pred_ddg in rec_corr_list:
+            amber_dg_dict[filename] = { "Mean Binding Energy" : get_mean_csv(os.path.join(amber_csv_path,filename+".csv"), protocol="amber"),
+                                         "Bottom 3 Binding Energy" : get_bottom3_csv(os.path.join(amber_csv_path,filename+".csv"), protocol="amber"),
+                                         "Mean Interaction Energy" : get_mean_txt(os.path.join(amber_inter_mean_path,filename+".txt")) }
+            rosetta_dg_dict[filename] = { "Mean Binding Energy" : get_mean_csv(os.path.join(rosetta_csv_path,filename+".csv"), protocol="rosetta"), 
+                                         "Bottom 3 Binding Energy" : get_bottom3_csv(os.path.join(rosetta_csv_path,filename+".csv"), protocol="rosetta"), 
+                                         "Mean Interaction Energy" : get_mean_txt(os.path.join(rosetta_inter_mean_path,filename+".txt")),
+                                         "Bottom 3 Interaction Energy" : get_bottom3_csv(os.path.join(rosetta_inter_path,filename+".csv")) }
+    
         #find wt csv that correspond to wt row in rec_corr_file (column 2)
         wt_csv_name = [ rec[2] for rec in rec_corr_list if "wt" in rec[1] ][0]
-        wt_a_csv_dict = amber_csv_dict[wt_csv_name]
-        wt_r_csv_dict = rosetta_csv_dict[wt_csv_name]
 
-        #find average of ddgs in wt csv as well as lowest rmsd and lowest energy (second and third columns)
-        amean_dg, amin_dg_dg, amin_rmsd_dg, abottom3_dg = get_stats(wt_a_csv_dict)
-        rmean_dg, rmin_dg_dg, rmin_rmsd_dg, rbottom3_dg = get_stats(wt_r_csv_dict)
-
-        known_ddg = []
-        a_mean_ddg = []
-        a_min_ddg = []
-        a_minr_ddg = []
-        a_bottom3_ddg = []
-        r_mean_ddg = []
-        r_min_ddg = []
-        r_minr_ddg = []
-        r_bottom3_ddg = []
-
+        amber_ddg_dict = {}
+        rosetta_ddg_dict = {}
+        known_ddg_dict = {}
+        pred_ddg_dict = {}
+ 
         #loops thru other records in rec_corr_dict
-        for rec, prefix, filename, k in rec_corr_list:
+        for rec, prefix, filename, k,p in rec_corr_list:
             if "wt" not in prefix:
-                a_amean_dg, a_amin_dg_dg, a_amin_rmsd_dg, a_abottom3_dg = get_stats(amber_csv_dict[filename])
-                r_rmean_dg, r_rmin_dg_dg, r_rmin_rmsd_dg, r_rbottom3_dg = get_stats(rosetta_csv_dict[filename])
+                if amber_ddg_dict.get(filename) is None:
+                    amber_ddg_dict[filename] = {}
+                if rosetta_ddg_dict.get(filename) is None:
+                    rosetta_ddg_dict[filename] = {}
+                for key, dg in amber_dg_dict[wt_csv_name].items():
+                    amber_ddg_dict[filename][key] = amber_dg_dict[filename][key] - dg
+                for key, dg in rosetta_dg_dict[wt_csv_name].items():
+                    rosetta_ddg_dict[filename][key] = rosetta_dg_dict[filename][key] - dg
+                known_ddg_dict[filename] = { "Known" : float(k) }
+                pred_ddg_dict[filename] = { "Pred" : float(p) }
 
-                known_ddg.append(float(k))
-	        a_mean_ddg.append(a_amean_dg-amean_dg)
- 	        a_min_ddg.append(a_amin_dg_dg-amin_dg_dg)
-                a_minr_ddg.append(a_amin_rmsd_dg-amin_rmsd_dg)
-                a_bottom3_ddg.append(a_abottom3_dg-abottom3_dg)
-                r_mean_ddg.append(r_rmean_dg-rmean_dg) 
-	        r_min_ddg.append(r_rmin_dg_dg-rmin_dg_dg)
-                r_minr_ddg.append(r_rmin_rmsd_dg-rmin_rmsd_dg)
-                r_bottom3_ddg.append(r_rbottom3_dg-rbottom3_dg)
+        all_amber_ddg_dict.update(amber_ddg_dict)
+        all_rosetta_ddg_dict.update(rosetta_ddg_dict)
+        all_known_ddg_dict.update(known_ddg_dict)
+        all_pred_ddg_dict.update(pred_ddg_dict)        
+   
+        fig, axarr = conv.create_ax(max([len(d) for k, d in amber_dg_dict.items() ]+[len(d) for k,d in rosetta_dg_dict.items()]), 3, shx=True, shy=True)
+        plot_ddg_dict(rosetta_ddg_dict,known_ddg_dict,axarr,0,"Rosetta",corr_values_dict)
+        plot_ddg_dict(amber_ddg_dict,known_ddg_dict,axarr,1,"Amber",corr_values_dict)
+        plot_ddg_dict(pred_ddg_dict,known_ddg_dict,axarr,2,"Pred",corr_values_dict)
+       
+        conv.save_fig(fig, out_csv_path + "/" + os.path.splitext(os.path.basename(rec_corr))[0] + ".txt", "ddg", max([len(d) for k, d in amber_dg_dict.items() ]+[len(d) for k,d in rosetta_dg_dict.items()])*4, 12)
+ 
 
-        all_amean_ddg.extend(a_mean_ddg)
-        all_rmean_ddg.extend(r_mean_ddg)
-        k_ddg.extend(known_ddg)
+    #Plot all correlation values
+    
+    fig_all, axarr_all = conv.create_ax(len(corr_values_dict["Rosetta"]),3)
 
-        fig, axarr = conv.create_ax(4, 2, shx=True, shy=True)
+    #assumes that Rosetta has more protocols than Amber
+    for x_ind,(protocol, vals) in enumerate(corr_values_dict["Rosetta"].items()):
+        if corr_values_dict["Amber"].get(protocol) is not None:
+            amber_vals = corr_values_dict["Amber"][protocol]
+        else:
+            amber_vals = None
+        pred_vals = corr_values_dict["Pred"]["Pred"]
+        labels=["-PCC","-Rho","-Mae"]
+        for ind,(val_list,label) in enumerate(zip(vals,labels)):
+            series = [[val_list,pred_vals[ind],"Rosetta "+protocol]]
+            if amber_vals is not None:
+                series.append([amber_vals[ind],pred_vals[ind],"Amber "+protocol])
+            scatterplot.plot_series(axarr_all[ind,x_ind], series, protocol,"Pred",label,colors=['coral','cyan'], size=40)
+            scatterplot.add_x_y_line(axarr_all[ind,x_ind])
 
-        a_vals = draw_plot(axarr[0,0], known_ddg, a_mean_ddg, 'b', "Mean", "Known DDG", "Amber DDG")    
-        r_vals = draw_plot(axarr[1,0], known_ddg, r_mean_ddg, 'b', "Mean", "Known DDG", "Rosetta DDG")
-        append_values_to_corr_dict( corr_values_dict, a_vals, r_vals, "Mean")
-
-        a_vals = draw_plot(axarr[0,1], known_ddg, a_min_ddg, 'b', "Min DG", "Known DDG", "Amber DDG")    
-	r_vals = draw_plot(axarr[1,1], known_ddg, r_min_ddg, 'b', "Min DG", "Known DDG", "Rosetta DDG")
-        append_values_to_corr_dict( corr_values_dict, a_vals, r_vals, "Min DG")
-
-        a_vals = draw_plot(axarr[0,2], known_ddg, a_minr_ddg, 'b', "Min RMSD", "Known DDG", "Amber DDG")    
-        r_vals = draw_plot(axarr[1,2], known_ddg, r_minr_ddg, 'b', "Min RMSD", "Known DDG", "Rosetta DDG")
-        append_values_to_corr_dict( corr_values_dict, a_vals, r_vals, "Min RMSD")
-
-        a_vals = draw_plot(axarr[0,3], known_ddg, a_bottom3_ddg, 'b', "Bottom 3", "Known DDG", "Amber DDG")    
-        r_vals = draw_plot(axarr[1,3], known_ddg, r_bottom3_ddg, 'b', "Bottom 3", "Known DDG", "Rosetta DDG")
-        append_values_to_corr_dict( corr_values_dict, a_vals, r_vals, "Bottom 3")
-
-        conv.save_fig(fig, out_csv_path + "/" + os.path.splitext(os.path.basename(rec_corr))[0] + ".txt", "ddg", 16, 8) 
-    labels_vals=["-PCC","-Rho","-Mae"]
-    labels=["Mean", "Min DG", "Min RMSD", "Bottom 3"]
-    for x_ind in range(0,3):
-        for y_ind,label in enumerate(labels):
-	    vals_list = corr_values_dict[label]
-            scatterplot.draw_actual_plot(axarr_all[x_ind,y_ind], vals_list[x_ind], vals_list[x_ind+3],'b',label+labels_vals[x_ind],"Amber","Rosetta", size=40)
-            axarr_all[x_ind,y_ind].relim()
-            # update ax.viewLim using the new dataLim
-            axarr_all[x_ind,y_ind].autoscale_view()
- 	    if x_ind == 2:   
- 	        axarr_all[x_ind,y_ind].set_xlim([-0.2,10.0])
-                axarr_all[x_ind,y_ind].set_ylim([-0.2,10.0])
-    	    	scatterplot.add_x_y_line(axarr_all[x_ind,y_ind],0.0,10.0)
-	    else:
-		axarr_all[x_ind,y_ind].set_xlim([-1.2,1.2])
-                axarr_all[x_ind,y_ind].set_ylim([-1.2,1.2])
-                scatterplot.add_x_y_line(axarr_all[x_ind,y_ind],-1.0,1.0)
+ 	    #if x_ind == 2:   
+ 	    #    axarr_all[x_ind,y_ind].set_xlim([-0.2,10.0])
+        #        axarr_all[x_ind,y_ind].set_ylim([-0.2,10.0])
+    	#    	scatterplot.add_x_y_line(axarr_all[x_ind,y_ind],0.0,10.0)
+	    #else:
+		#axarr_all[x_ind,y_ind].set_xlim([-1.2,1.2])
+        #        axarr_all[x_ind,y_ind].set_ylim([-1.2,1.2])
+        #        scatterplot.add_x_y_line(axarr_all[x_ind,y_ind],-1.0,1.0)
 	    
     conv.save_fig(fig_all, out_csv_path + "/all.txt", "ddg", 16, 12)
 
-    draw_plot(axarr_all_corr[0,0], k_ddg, all_amean_ddg, 'b', "All Mean", "Known DDG", "Amber DDG")
-    draw_plot(axarr_all_corr[1,0], k_ddg, all_rmean_ddg, 'b', "All Mean", "Known DDG", "Rosetta DDG")
+    fig_all_corr, axarr_all_corr = conv.create_ax(max([len(d) for k, d in all_amber_ddg_dict.items() ]+[len(d) for k,d in all_rosetta_ddg_dict.items()]), 3, shx=True, shy=True)
+    plot_ddg_dict(all_rosetta_ddg_dict,all_known_ddg_dict,axarr_all_corr,0,"Rosetta",corr_values_dict)
+    plot_ddg_dict(all_amber_ddg_dict,all_known_ddg_dict,axarr_all_corr,1,"Amber",corr_values_dict)
+    plot_ddg_dict(all_pred_ddg_dict,all_known_ddg_dict,axarr_all_corr,2,"Pred",corr_values_dict)
+    
+    conv.save_fig(fig_all_corr, out_csv_path + "/all_corr.txt", "ddg",max([len(d) for k, d in amber_dg_dict.items() ]+[len(d) for k,d in rosetta_dg_dict.items()])*4, 12) 
+        
 
-    conv.save_fig(fig_all_corr, out_csv_path + "/all_corr.txt", "ddg", 4, 8)
+def plot_ddg_dict(ddg_dict,known_ddg_dict,axarr,row,y_axis_name, corr_values_dict):
+    total_dict = {}
 
-def append_values_to_corr_dict( corr_values_dict, a_vals, r_vals, label ):
-    corr_values_dict[label][0].append(a_vals[0])
-    corr_values_dict[label][1].append(a_vals[1])
-    corr_values_dict[label][2].append(a_vals[2])
-    corr_values_dict[label][3].append(r_vals[0])
-    corr_values_dict[label][4].append(r_vals[1])
-    corr_values_dict[label][5].append(r_vals[2])
+    for filename, protocol_dict in ddg_dict.items():
+        for title, ddg in protocol_dict.items():
+            if total_dict.get(title) is None:
+                total_dict[title] = [[],[]]
+            total_dict[title][0].append(ddg)
+            total_dict[title][1].append(known_ddg_dict[filename]["Known"])
+    
+    for ind, (title, (pred_ddg,known_ddg)) in enumerate(total_dict.items()):
+        vals = draw_plot(axarr[row,ind], known_ddg, pred_ddg, 'b', title, "Known DDG", y_axis_name)
 
+        #corr_values_dict has the following shape - "Pred" : { "Pred" : [ddg_vals] }, "Amber" : { "Mean.." : [ddg_vals], "Bott.." : [ddg_vals]}, "Rosetta" : { "Mean.." : [ddg_vals], "Bott.." : [ddg_vals]}     
+        if corr_values_dict.get(y_axis_name) is None:
+            corr_values_dict[y_axis_name] = {}
+        if corr_values_dict[y_axis_name].get(title) is None:
+            corr_values_dict[y_axis_name][title] = [[],[],[]]
+        corr_values_dict[y_axis_name][title][0].append(vals[0])
+        corr_values_dict[y_axis_name][title][1].append(vals[1])
+        corr_values_dict[y_axis_name][title][2].append(vals[2])
 
 def mean_abs_error(known, pred):
     sum_err=0.0
@@ -178,8 +268,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument ('--rec_corr', help="record correspondence file")
-    parser.add_argument ('--amber_csv_path', help="amber csv dg file")
-    parser.add_argument ('--rosetta_csv_path', help="rosetta csv dg file")
+    parser.add_argument ('--ddg_path', help="dg files")
     parser.add_argument ('--amber_pdb_path', help="In path for Amber pdbs")
     parser.add_argument ('--rosetta_pdb_path', help="In path for Rosetta pdbs")
     parser.add_argument ('--out_csv_path', help="Out path for final csv files")
@@ -187,4 +276,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    main(args.rec_corr, args.amber_csv_path, args.rosetta_csv_path, args.amber_pdb_path, args.rosetta_pdb_path, args.out_csv_path) 
+    main(args.rec_corr, args.ddg_path, args.amber_pdb_path, args.rosetta_pdb_path, args.out_csv_path) 
